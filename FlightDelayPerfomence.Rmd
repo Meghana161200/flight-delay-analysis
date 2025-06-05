@@ -37,7 +37,7 @@ library(pROC)
 
 ```{r}
 #Importing file
-flights_raw <- read_csv("/Users/meghanaatluri/Desktop/GIT/FLIGHTS/on_time_perf_dec2022.csv")
+flights_raw <- read_csv("on_time_perf_dec2022.csv")
 ```
 
 # [UNDERSTANDING OUR DATA]{.underline}
@@ -593,10 +593,9 @@ print(paste("ROC AUC: ", round(roc_auc, 4)))
 
 ```{r}
 library(readr)
-write_csv(flights_cleaned, "/Users/meghanaatluri/Desktop/GIT/FLIGHTS/
-          flights_cleaned.csv")
-write_csv(flights_delay, "/Users/meghanaatluri/Desktop/GIT/FLIGHTS/
-          flights_delay.csv")
+write_csv(flights_cleaned, "flights_cleaned.csv")
+write_csv(flights_delay, "flights_delay.csv")
+
 ```
 
 # EXPORTING FROM R
@@ -604,7 +603,7 @@ write_csv(flights_delay, "/Users/meghanaatluri/Desktop/GIT/FLIGHTS/
 ```{r}
 coefs <- summary(step_model)$coefficients
 coefs_df <- data.frame(Feature = rownames(coefs), Coefficient = coefs[, "Estimate"])
-write.csv(coefs_df, "/Users/meghanaatluri/Desktop/GIT/FLIGHTS/feature_importance.csv", row.names = FALSE)
+write.csv(coefs_df, "feature_importance.csv", row.names = FALSE)
 
 ```
 
@@ -617,6 +616,6 @@ pred_df <- data.frame(
   OriginAirportCode = test_data$OriginAirportCode
 )
 
-write.csv(pred_df, "/Users/meghanaatluri/Desktop/GIT/FLIGHTS/predictions.csv", row.names = FALSE)
+write.csv(pred_df, "predictions.csv", row.names = FALSE)
 
 
