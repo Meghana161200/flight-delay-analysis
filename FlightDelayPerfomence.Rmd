@@ -619,12 +619,4 @@ pred_df <- data.frame(
 
 write.csv(pred_df, "/Users/meghanaatluri/Desktop/GIT/FLIGHTS/predictions.csv", row.names = FALSE)
 
-```
 
-```{r}
-
-```
-
-```{r}
-
-```
