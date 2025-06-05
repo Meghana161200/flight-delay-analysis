@@ -1,0 +1,630 @@
+---
+title: "Flights Delay Perfomence"
+author: "Meghana Atluri"
+format: 
+  pdf:
+    self-contained: true
+---
+
+# [DATA]{.underline}
+
+<https://www.transtats.bts.gov/Fields.asp?gnoyr_VQ=FGJ>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  warning = FALSE,
+  message = FALSE,
+  tidy = TRUE,
+  comment = "#>",
+  fig.align = 'center',
+  echo = TRUE
+)
+```
+
+```{r}
+#Loding necessary libraries
+library(dplyr)
+library(readr)
+library(janitor)
+library(lubridate)
+library(ggplot2)
+library(tidyr)
+library(tidyverse)
+library(rsample)
+library(MASS)
+library(pROC)
+```
+
+```{r}
+#Importing file
+flights_raw <- read_csv("/Users/meghanaatluri/Desktop/GIT/FLIGHTS/on_time_perf_dec2022.csv")
+```
+
+# [UNDERSTANDING OUR DATA]{.underline}
+
+```{r}
+#dimensions of dataset
+dim(flights_raw)
+```
+
+```{r}
+#Glimpse of data
+glimpse(flights_raw)
+```
+
+```{r}
+#column names
+colnames(flights_raw)
+```
+
+```{r}
+#datatype of col
+str(flights_raw)
+```
+
+# [TIDY DATA]{.underline}
+
+```{r}
+#cleaning and renaming columns
+flights_raw <- flights_raw |>
+  clean_names() |>
+  rename(
+    Year = year,
+    Quarter = quarter,
+    Month = month,
+    DayOfMonth = day_of_month,
+    DayOfWeek = day_of_week,
+    FlightDate = fl_date,
+    OperatingAirline = op_unique_carrier,
+    TailNumber = tail_num,
+    FlightNumber = op_carrier_fl_num,
+    OriginAirportCode = origin,
+    OriginCity = origin_city_name,
+    OriginState = origin_state_nm,
+    DestAirportCode = dest,
+    DestCity = dest_city_name,
+    DestState = dest_state_nm,
+    ScheduledDepTime = crs_dep_time,
+    ActualDepTime = dep_time,
+    DepDelayMinutes = dep_delay,
+    ScheduledArrTime = crs_arr_time,
+    ActualArrTime = arr_time,
+    ArrDelayMinutes = arr_delay,
+    Cancelled = cancelled,
+    CancellationCode = cancellation_code,
+    Diverted = diverted,
+    CarrierDelayMinutes = carrier_delay,
+    WeatherDelayMinutes = weather_delay,
+    NASDelayMinutes = nas_delay,
+    SecurityDelayMinutes = security_delay,
+    LateAircraftDelayMinutes = late_aircraft_delay
+  )
+```
+
+```{r}
+#Drop TailNumber column
+flights_cleaned = subset(flights_raw, select = -c(TailNumber) )
+```
+
+```{r}
+#Checking number of NA values in each column
+count_na <- function(x) {
+  sum(is.na(x))
+}
+apply(flights_cleaned, MARGIN = 2, FUN = count_na)
+```
+
+```{r}
+#Handling NA : Imputing 9999(flag) in delay min for cancelled flights
+flights_cleaned <- flights_cleaned %>%
+  mutate(
+    DepDelayMinutes = if_else(is.na(DepDelayMinutes) & Cancelled == 1, 9999, DepDelayMinutes),
+    ArrDelayMinutes = if_else(is.na(ArrDelayMinutes) & Cancelled == 1, 9999, ArrDelayMinutes)
+    )
+```
+
+```{r}
+#New Columns 
+flights_cleaned <- flights_cleaned %>%
+  mutate(
+    CancelledFlag = if_else(Cancelled == 1, 1, 0),
+    DivertedFlag = ifelse(Diverted == 1, 1, 0)
+  )
+```
+
+```{r}
+#Handling NA:Replace NA with "Not Canceled" (when Cancelled == 0).
+flights_cleaned <- flights_cleaned %>%
+  mutate(
+    CancellationCode = if_else(is.na(CancellationCode) & Cancelled == 0, "Not Canceled", as.character(CancellationCode))
+  )
+
+```
+
+```{r}
+#Handling NA
+
+flights_cleaned <- flights_cleaned %>%
+  mutate(
+    # If ArrivalDelay is 0 or negative (on-time or early), set all delay columns to 0
+    CarrierDelayMinutes = if_else(ArrDelayMinutes <= 0 & Cancelled == 0 & Diverted == 0, 0, CarrierDelayMinutes),
+    WeatherDelayMinutes = if_else(ArrDelayMinutes <= 0 & Cancelled == 0 & Diverted == 0, 0, WeatherDelayMinutes),
+    NASDelayMinutes = if_else(ArrDelayMinutes <= 0 & Cancelled == 0 & Diverted == 0, 0, NASDelayMinutes),
+    SecurityDelayMinutes = if_else(ArrDelayMinutes <= 0 & Cancelled == 0 & Diverted == 0, 0, SecurityDelayMinutes),
+    LateAircraftDelayMinutes = if_else(ArrDelayMinutes <= 0 & Cancelled == 0 & Diverted == 0, 0, LateAircraftDelayMinutes),
+    
+    # For cancelled flights, assign 9999(flag) for delay columns (since flight didn't occur)
+    CarrierDelayMinutes = if_else(is.na(CarrierDelayMinutes) & Cancelled == 1, 9999, CarrierDelayMinutes),
+    WeatherDelayMinutes = if_else(is.na(WeatherDelayMinutes) & Cancelled == 1, 9999, WeatherDelayMinutes),
+    NASDelayMinutes = if_else(is.na(NASDelayMinutes) & Cancelled == 1, 9999, NASDelayMinutes),
+    SecurityDelayMinutes = if_else(is.na(SecurityDelayMinutes) & Cancelled == 1, 9999, SecurityDelayMinutes),
+    LateAircraftDelayMinutes = if_else(is.na(LateAircraftDelayMinutes) & Cancelled == 1, 9999, LateAircraftDelayMinutes)
+  )
+
+```
+
+```{r}
+# Imputing median for delay columns where CancelledFlag is not TRUE
+flights_cleaned <- flights_cleaned %>%
+  mutate(
+    CarrierDelayMinutes = ifelse(CancelledFlag != TRUE & is.na(CarrierDelayMinutes),
+                                 round(median(CarrierDelayMinutes[CancelledFlag != TRUE], 
+                                              na.rm = TRUE)),
+                                 CarrierDelayMinutes),
+    WeatherDelayMinutes = ifelse(CancelledFlag != TRUE & is.na(WeatherDelayMinutes),
+                                 round(median(WeatherDelayMinutes[CancelledFlag != TRUE], 
+                                              na.rm = TRUE)),
+                                 WeatherDelayMinutes),
+    NASDelayMinutes = ifelse(CancelledFlag != TRUE & is.na(NASDelayMinutes),
+                             round(median(NASDelayMinutes[CancelledFlag != TRUE], na.rm = TRUE)),
+                             NASDelayMinutes),
+    SecurityDelayMinutes = ifelse(CancelledFlag != TRUE & is.na(SecurityDelayMinutes),
+                                  round(median(SecurityDelayMinutes[CancelledFlag != TRUE],
+                                               na.rm = TRUE)),
+                                  SecurityDelayMinutes),
+    LateAircraftDelayMinutes = ifelse(CancelledFlag != TRUE & is.na(LateAircraftDelayMinutes),
+                                      round(median(LateAircraftDelayMinutes[CancelledFlag != TRUE], na.rm = TRUE)),
+                                      LateAircraftDelayMinutes)
+  )
+
+```
+
+```{r}
+#Checking number of NA values in each column
+count_na <- function(x) {
+  sum(is.na(x))
+}
+apply(flights_cleaned, MARGIN = 2, FUN = count_na)
+```
+
+```{r}
+# Convert columns to factors
+flights_cleaned <- flights_cleaned %>%
+  mutate(
+    Year = as.factor(Year),
+    Quarter = as.factor(Quarter),
+    Month = as.factor(Month),
+    DayOfMonth = as.factor(DayOfMonth),
+    DayOfWeek = as.factor(DayOfWeek),
+    OperatingAirline = as.factor(OperatingAirline),
+    FlightNumber = as.factor(FlightNumber),
+    OriginAirportCode = as.factor(OriginAirportCode),
+    DestAirportCode = as.factor(DestAirportCode),
+    CancellationCode = as.factor(CancellationCode),
+    OriginCity = as.factor(OriginCity),
+    OriginState = as.factor(OriginState),
+    DestCity = as.factor(DestCity),
+    DestState = as.factor(DestState)
+  )
+```
+
+```{r}
+# Convert Date columns to Date 
+flights_cleaned <- flights_cleaned %>%
+  mutate(
+    FlightDate = format(mdy_hms(FlightDate), "%Y-%m-%d")
+  )
+
+```
+
+```{r}
+# Convert Date columns to Date
+flights_cleaned$ScheduledDepTime <- format(as.POSIXct(sprintf("%04s", as.character(flights_cleaned$ScheduledDepTime)), format = "%H%M", tz = "UTC"), "%H:%M")
+flights_cleaned$ActualDepTime <- format(as.POSIXct(sprintf("%04s", as.character(flights_cleaned$ActualDepTime)), format = "%H%M", tz = "UTC"), "%H:%M")
+
+flights_cleaned$ScheduledArrTime <- format(as.POSIXct(sprintf("%04s", as.character(flights_cleaned$ScheduledArrTime)), format = "%H%M", tz = "UTC"), "%H:%M")
+flights_cleaned$ActualArrTime <- format(as.POSIXct(sprintf("%04s", as.character(flights_cleaned$ActualArrTime)), format = "%H%M", tz = "UTC"), "%H:%M")
+```
+
+```{r}
+# Convert to Numeric
+flights_cleaned$DepDelayMinutes <- as.numeric(flights_cleaned$DepDelayMinutes)
+flights_cleaned$ArrDelayMinutes <- as.numeric(flights_cleaned$ArrDelayMinutes)
+```
+
+```{r}
+# Convert to Factors with levels
+flights_cleaned <- flights_cleaned %>%
+  mutate(
+    Cancelled = factor(Cancelled, levels = c(0, 1)),
+    Diverted = factor(Diverted, levels = c(0, 1)),
+    CancelledFlag = factor(CancelledFlag , levels = c(0, 1)),
+    DivertedFlag = factor(DivertedFlag, levels = c(0, 1) )
+  )
+```
+
+```{r}
+# Convert delay columns to Numeric
+flights_cleaned <- flights_cleaned %>%
+  mutate(
+    CarrierDelayMinutes = as.numeric(CarrierDelayMinutes),
+    WeatherDelayMinutes = as.numeric(WeatherDelayMinutes),
+    NASDelayMinutes = as.numeric(NASDelayMinutes),
+    SecurityDelayMinutes = as.numeric(SecurityDelayMinutes),
+    LateAircraftDelayMinutes = as.numeric(LateAircraftDelayMinutes)
+  )
+```
+
+```{r}
+#Ckecking datatype
+str(flights_cleaned)
+```
+
+# [Exploratory Data Analysis (ED]{.underline}A)
+
+```{r}
+# Create dataset for Cancelled flights
+cancelled_flights <- flights_cleaned %>%
+  filter(Cancelled == 1) 
+```
+
+```{r}
+#Create dataset for all flights(- Cancelled flights)
+flights_delay <- flights_cleaned %>%
+  filter(Cancelled == 0) 
+```
+
+```{r}
+#Summary
+summary(flights_delay)
+```
+
+#### **1.Understanding Flight Perfomence**
+
+```{r}
+# Total number of flights
+total_flights <- nrow(flights_cleaned)
+
+# Number of cancelled flights
+cancelled_flights <- sum(flights_cleaned$Cancelled == 1)
+
+# Number of diverted flights
+diverted_flights <- sum(flights_cleaned$Diverted == 1)
+
+# Percentages
+cancelled_pct <- round((cancelled_flights / total_flights) * 100, 2)
+diverted_pct <- round((diverted_flights / total_flights) * 100, 2)
+
+# Summary table
+summary_df <- data.frame(
+  Metric = c("Total Flights", "Cancelled Flights", "Diverted Flights"),
+  Count = c(total_flights, cancelled_flights, diverted_flights),
+  Percent = c(100, cancelled_pct, diverted_pct)
+)
+summary_df
+
+```
+
+```{r}
+# Bar chart for counts (corrected)
+ggplot(summary_df, aes(x = Metric, y = Count, fill = Metric)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = Count) )+
+  labs(title = "Flight Summary: Total, Cancelled, Diverted",
+       y = "Number of Flights",
+       x = "") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+There were 557095 flights in Dec 2022. About 5.49% were cancelled and 0.23% were diverted. The majority of flights (94.25%) were completed as scheduled.
+
+#### **2.Analyze delay patterns by airline**
+
+```{r}
+#Avd Departure Delay (in min) by airline 
+avg_dep_delay <- flights_cleaned %>%
+  filter(Cancelled == 0) %>%
+  group_by(OperatingAirline) %>%
+  summarise(AvgDepDelay = round(mean(DepDelayMinutes, na.rm = TRUE), 2)) %>%
+  arrange(desc(AvgDepDelay))
+avg_dep_delay
+```
+
+```{r}
+# Bar plot
+ggplot(avg_dep_delay, aes(x = reorder(OperatingAirline, -AvgDepDelay), y = AvgDepDelay)) +
+  geom_col(fill = 'steelblue') +
+  labs(title = "Average Departure Delay by Airline", x = "Airline", y = "Avg Departure Delay (in mins)") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+Airlines F9 has the highest average departure delays (\~31 mins), while OH , YX had the lowest (\~5 mins) indicating relative airline punctuality.
+
+#### **3.Airports with frequent delays**
+
+```{r}
+# Top 10 OriginAirports by Avg Arrival Delay
+top_origin_delay <- flights_cleaned %>%
+  filter(Cancelled == 0) %>%
+  group_by(OriginAirportCode) %>%
+  summarise(AvgArrDelay = round(mean(ArrDelayMinutes, na.rm = TRUE), 2)) %>%
+  arrange(desc(AvgArrDelay)) %>%
+  head(10)
+top_origin_delay
+```
+
+```{r}
+# Bar chart
+ggplot(top_origin_delay, aes(x = reorder(OriginAirportCode, -AvgArrDelay), y = AvgArrDelay)) +
+  geom_col(fill = 'pink') +
+  labs(title = "Top 10 Origin Airports by Avg Arrival Delay", x = "Origin Airport", y = "Avg Arrival Delay (mins)")
+```
+
+Airports BIH (Bishop, CA), SCK (Stockton,CA) show higher average arrival delays (\~66+ mins), possibly indicating carrier or weather issues at these locations.
+
+#### 4.Impact of day of week on delays
+
+```{r}
+#Arrival Delay by dayofweek
+del_day_week <- flights_cleaned %>%
+  filter(Cancelled == 0) %>%
+  group_by(DayOfWeek) %>%
+  summarise(AvgArrDelay = round(mean(ArrDelayMinutes, na.rm = TRUE), 2)) %>%
+  arrange(desc(AvgArrDelay)) 
+del_day_week
+```
+
+```{r}
+#Horizontal Bar Graph
+ggplot(del_day_week, aes(x = reorder(factor(DayOfWeek), AvgArrDelay), y = AvgArrDelay)) +
+  geom_col(fill = "purple", alpha = 0.6) +
+  labs(title = "Arrival Delay by Day of the Week",
+       x = "Day of Week (1=Mon, 7=Sun)",
+       y = "Average Arrival Delay (mins)") +
+  theme_minimal() +
+  coord_flip()
+```
+
+Delays appear slightly higher on weekends (Fri - Sun) likely due to heavier passenger loads and weekend travel surges.
+
+#### 5.Reasons for cancellations
+
+```{r}
+#Cancellation reason
+cancel_reasons <- flights_cleaned %>%
+  filter(Cancelled == 1) %>%
+  group_by(CancellationCode) %>%
+  summarise(Count = n()) %>%
+  mutate(Percent = round((Count / sum(Count)) * 100, 2))
+cancel_reasons
+```
+
+```{r}
+# Bar plot
+ggplot(cancel_reasons, aes(x = CancellationCode, y = Count, fill = CancellationCode)) +
+  geom_col() +
+  labs(title = "Cancellation Reasons Distribution", x = "Cancellation Code", y = "Count") +
+  theme(legend.position = "none")
+```
+
+Most flight cancellations (61%) were due to Carrier-related reasons (Code A), followed by Weather (38%). NAS-related issues (Code C) accounted for only 1.6%.
+
+#### 6.Relationship between departure and arrival delays
+
+```{r}
+# Fit the linear regression model
+lm_model <- lm(ArrDelayMinutes ~ DepDelayMinutes, data = flights_cleaned %>% filter(Cancelled == 0))
+
+# Summary of the model
+lm_summary <- summary(lm_model)
+lm_summary
+```
+
+```{r}
+#Regression line plot
+ggplot(flights_cleaned %>% filter(Cancelled == 0), aes(DepDelayMinutes,ArrDelayMinutes )) +
+  geom_point(alpha=0.7, size=0.9) +
+  geom_smooth(method="lm", se=FALSE, size=1)
+```
+
+-   R² = 0.9474 → Very strong linear relationship (94.74% of the variation in Arrival Delay based on Departure Delay. )
+
+-   Residual Std. Error = 14.94 min (predictions deviate \~15 mins from actual arrival delay )
+
+-   Highly significant variables, both intercept and departure delay are statistically relevant in predicting arrival delay.
+
+#### 7.Impact of weather and other factors on delays
+
+```{r}
+delay_factors <- flights_cleaned %>%
+  filter(Cancelled == 0, Diverted == 0) %>%
+  summarise(
+    Carrier = sum(CarrierDelayMinutes, na.rm = TRUE),
+    Weather = sum(WeatherDelayMinutes, na.rm = TRUE),
+    NAS = sum(NASDelayMinutes, na.rm = TRUE),
+    Security = sum(SecurityDelayMinutes, na.rm = TRUE),
+    LateAircraft = sum(LateAircraftDelayMinutes, na.rm = TRUE)
+  ) %>%
+  pivot_longer(cols = everything(), names_to = "Cause", values_to = "TotalMinutes")
+
+delay_factors
+```
+
+```{r}
+# Bar plot
+ggplot(delay_factors, aes(x = reorder(Cause, -TotalMinutes), y = TotalMinutes)) +
+  geom_col(fill = 'darkgreen') +
+  labs(title = "Total Delay Minutes by Cause", x = "Cause of Delay", y = "Total Delay Minutes")
+
+```
+
+Late aircraft connections and NAS (Airspace system) issues contribute the largest share of total delays, while Security causes very minimal delays.
+
+# [MODELING]{.underline}
+
+#### Classification Model — Predict Delay
+
+```{r}
+# DepDelayFlag (0 = No delay, 1 = Delay)
+flights_delay$DepDelayFlag <- ifelse(flights_delay$DepDelayMinutes > 15, 1, 0)
+flights_delay$DepDelayFlag <- factor(flights_delay$DepDelayFlag, levels = c(0, 1))
+
+```
+
+Created a new column called DepDelayFlag if delay of more than 15 minutes it assigns a value of 1 (delayed flight) else 0. Its a factor with two levels: 0 and 1
+
+```{r}
+# Split data
+set.seed(123)
+split <- initial_split(flights_delay, prop = 0.8, strata = DepDelayFlag)
+train_data <- training(split)
+test_data  <- testing(split)
+```
+
+Splits the dataset into two parts: a training and test set where 80% of the data is training set, and the remaining 20% will be used for testing.
+
+```{r}
+# Fit a GLM model 
+glm_model <- glm(DepDelayFlag ~  CarrierDelayMinutes + WeatherDelayMinutes + NASDelayMinutes + SecurityDelayMinutes + LateAircraftDelayMinutes  + DayOfWeek  + OperatingAirline, 
+                 family = binomial, 
+                 data = train_data)
+# Summarize the model
+summary(glm_model)
+```
+
+-   Logistic regression to predict whether there is a departure delay using several predictor variables.
+
+-   Dependent variable - DepDelayFlag 0 indicating no delay and 1 indicating a delay.
+
+-   Predictor variables: CarrierDelayMinutes ,WeatherDelayMinutes, NASDelayMinutes, SecurityDelayMinutes, LateAircraftDelayMinutes, DayOfWeek, OperatingAirline.
+
+-   The intercept is -3.035, meaning when all predictors are zero, the log-odds of a delay are negative (the probability of a delay is low).
+
+-   The positive coefficient (CarrierDelayMinutes ,WeatherDelayMinutes, NASDelayMinutes, SecurityDelayMinutes, LateAircraftDelayMinutes) indicates that for every additional minute of carrier delay, the log-odds of a delay increase. This predictor is highly significant.
+
+-   Predictors (CarrierDelayMinutes ,WeatherDelayMinutes, NASDelayMinutes, SecurityDelayMinutes, LateAircraftDelayMinutes )have a very strong impact on the likelihood of a delay, as indicated by their very small p-values.
+
+-   Day of the week and the operating airline are also significant in many cases but not for all values (e.g DayOfweek2 , DayOfWeek5 are not significant).
+
+```{r}
+step_model <- step(glm_model, direction = "backward")
+summary(step_model)
+```
+
+-   Did backward stepwise selection on GLM model using step().
+
+-   Backward stepwise selection retained all predictors in the model, meaning each variable contributed to improving model fit (AIC). Removing any variable increased AIC, suggesting its relevance to predicting flight delays.
+
+-   Although some predictors were not individually significant (p \> 0.05), backward stepwise selection retained them because their inclusion improved model fit as measured by AIC.
+
+```{r}
+# Predict on test data
+pred_probs <- predict(step_model, newdata = test_data, type = "response")
+pred_class <- ifelse(pred_probs > 0.4, 1, 0)
+```
+
+Predicts the probability that flight is delayed or each row in test_data. If predicted probability \> 0.5 its Delayed If predicted probability ≤ 0.5 its not delayed.
+
+```{r}
+# Confusion Matrix
+confusion_matrix <- table(Predicted = pred_class, Actual = test_data$DepDelayFlag)
+confusion_matrix
+```
+
+TN - 76587 ; FP - 1276 ; FN - 5649 ; TP - 21791
+
+```{r}
+# Calculate accuracy
+accuracy <- mean(pred_class == test_data$DepDelayFlag)
+print(paste("Accuracy:", round(accuracy * 100, 2), "%"))
+```
+
+The model correctly predicted 93.42% of the flight delays.
+
+```{r}
+# Precision, Recall, F1-Score Calculation
+precision <- confusion_matrix[2, 2] / sum(confusion_matrix[2, ])
+recall <- confusion_matrix[2, 2] / sum(confusion_matrix[, 2])
+f1_score <- 2 * (precision * recall) / (precision + recall)
+
+print(paste("Precision: ", round(precision, 4)))
+print(paste("Recall: ", round(recall, 4)))
+print(paste("F1-Score: ", round(f1_score, 4)))
+```
+
+-   A precision of 0.9447 means that about 94.47% of the flights predicted to be delayed were indeed delayed.
+
+-   A recall of 0.7941 indicates that the model correctly identified about 79.41% of the flights that were actually delayed.
+
+-   An F1-Score of 0.8629 shows that the model has a good balance between precision and recall.
+
+```{r}
+pred_probs <- predict(step_model, newdata = test_data, type = "response")
+pr_curve <- roc(test_data$DepDelayFlag, pred_probs, plot = TRUE, print.auc = TRUE, col = "blue")
+```
+
+```{r}
+
+# Get predicted probabilities from the model
+pred_probs <- predict(step_model, newdata = test_data, type = "response")
+
+# Create ROC curve object
+roc_curve <- roc(test_data$DepDelayFlag, pred_probs)
+
+# Calculate AUC
+roc_auc <- auc(roc_curve)
+
+# Print AUC
+print(paste("ROC AUC: ", round(roc_auc, 4)))
+
+```
+
+```{r}
+library(readr)
+write_csv(flights_cleaned, "/Users/meghanaatluri/Desktop/GIT/FLIGHTS/
+          flights_cleaned.csv")
+write_csv(flights_delay, "/Users/meghanaatluri/Desktop/GIT/FLIGHTS/
+          flights_delay.csv")
+```
+
+# EXPORTING FROM R
+
+```{r}
+coefs <- summary(step_model)$coefficients
+coefs_df <- data.frame(Feature = rownames(coefs), Coefficient = coefs[, "Estimate"])
+write.csv(coefs_df, "/Users/meghanaatluri/Desktop/GIT/FLIGHTS/feature_importance.csv", row.names = FALSE)
+
+```
+
+```{r}
+pred_df <- data.frame(
+  ActualDelayFlag = test_data$DepDelayFlag,
+  PredictedProb = pred_probs,
+  PredictedClass = pred_class,
+  OperatingAirline = test_data$OperatingAirline,
+  OriginAirportCode = test_data$OriginAirportCode
+)
+
+write.csv(pred_df, "/Users/meghanaatluri/Desktop/GIT/FLIGHTS/predictions.csv", row.names = FALSE)
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
