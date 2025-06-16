@@ -48,26 +48,8 @@ Built interactive dashboards in Tableau to visualize:
   
 ---
 
-## 📁 Files in This Repository
-- `FlightDelayPerfomence.Rmd` – R Markdown file containing data cleaning, EDA, and modeling steps
-- `On Time Perfomence.png`, `Airline Performance.png`, `Airport Delay Analysis.png` , `EDA.png`, `Delay Causes Breakdown.png`, `Flights_model.png` – Exported dashboard image
-- `README.md` – Project summary and documentation
-
----
-
-## 🔗 Tableau Files (Externally)
+## 🔗 Tableau Files 
 > GitHub has a 25MB limit, so the Tableau files are hosted on Google Drive.
 
 - [Flight_Project.twbx (Google Drive)](https://drive.google.com/file/d/17uDlp5pjh9GJc9cZUQLpidAzG--N_9nB/view?usp=share_link)
 - [Flights_model.twbx (Google Drive)](https://drive.google.com/file/d/1As1e10HeCwbUPv-2UdpQaZKw5ILo6JgE/view?usp=share_link)
-
----
-
--  Comprehensive workflow from raw data to interactive insights
--  Built a predictive model 
--  Combined technical and visualization tools to form a compelling data story
-
----
-
-## 👤 Author
-**Meghana Atluri** 
